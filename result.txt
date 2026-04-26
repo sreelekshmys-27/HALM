@@ -1,0 +1,75 @@
+Using device: cpu
+
+100%|██████████| 9.91M/9.91M [00:00<00:00, 15.9MB/s]
+100%|██████████| 28.9k/28.9k [00:00<00:00, 477kB/s]
+100%|██████████| 1.65M/1.65M [00:00<00:00, 4.39MB/s]
+100%|██████████| 4.54k/4.54k [00:00<00:00, 7.32MB/s]
+
+======================================================================
+Training with FP32 (Standard)
+======================================================================
+
+
+Epoch  1/10: Train Acc:  91.92%, Test Acc:  95.83%
+Epoch  2/10: Train Acc:  96.63%, Test Acc:  97.04%
+Epoch  3/10: Train Acc:  97.66%, Test Acc:  97.12%
+Epoch  4/10: Train Acc:  98.14%, Test Acc:  97.61%
+Epoch  5/10: Train Acc:  98.62%, Test Acc:  97.69%
+Epoch  6/10: Train Acc:  98.83%, Test Acc:  97.70%
+Epoch  7/10: Train Acc:  99.08%, Test Acc:  97.72%
+Epoch  8/10: Train Acc:  99.31%, Test Acc:  97.83%
+Epoch  9/10: Train Acc:  99.46%, Test Acc:  97.82%
+Epoch 10/10: Train Acc:  99.63%, Test Acc:  97.76%
+
+FP32 (Standard) - Final Test Accuracy: 97.76%
+Training Time: 171.26 seconds
+
+======================================================================
+Training with FP16 (Approximate)
+======================================================================
+Epoch  1/10: Train Acc:  91.37%, Test Acc:  95.40%
+Epoch  2/10: Train Acc:  96.17%, Test Acc:  96.53%
+Epoch  3/10: Train Acc:  97.14%, Test Acc:  96.98%
+Epoch  4/10: Train Acc:  97.80%, Test Acc:  97.06%
+Epoch  5/10: Train Acc:  98.26%, Test Acc:  97.30%
+Epoch  6/10: Train Acc:  98.55%, Test Acc:  97.53%
+Epoch  7/10: Train Acc:  98.91%, Test Acc:  97.51%
+Epoch  8/10: Train Acc:  99.14%, Test Acc:  97.53%
+Epoch  9/10: Train Acc:  99.33%, Test Acc:  97.80%
+Epoch 10/10: Train Acc:  99.49%, Test Acc:  97.74%
+
+FP16 (Approximate) - Final Test Accuracy: 97.74%
+Training Time: 175.14 seconds
+
+======================================================================
+Training with BFloat16 (Approximate)
+======================================================================
+Epoch  1/10: Train Acc:  91.50%, Test Acc:  95.42%
+Epoch  2/10: Train Acc:  96.21%, Test Acc:  96.59%
+Epoch  3/10: Train Acc:  97.20%, Test Acc:  96.89%
+Epoch  4/10: Train Acc:  97.76%, Test Acc:  97.32%
+Epoch  5/10: Train Acc:  98.31%, Test Acc:  97.16%
+Epoch  6/10: Train Acc:  98.65%, Test Acc:  97.33%
+Epoch  7/10: Train Acc:  98.92%, Test Acc:  97.53%
+Epoch  8/10: Train Acc:  99.18%, Test Acc:  97.60%
+Epoch  9/10: Train Acc:  99.39%, Test Acc:  97.54%
+Epoch 10/10: Train Acc:  99.50%, Test Acc:  97.58%
+
+BFloat16 (Approximate) - Final Test Accuracy: 97.58%
+Training Time: 182.15 seconds
+
+
+======================================================================
+CLASSIFICATION ACCURACY COMPARISON
+======================================================================
+Format               Test Accuracy   Training Time (s)   
+----------------------------------------------------------------------
+FP32 (Standard)       97.76%          171.26
+FP16 (Approximate)    97.74%          175.14
+BFloat16 (Approximate)  97.58%          182.15
+
+======================================================================
+ACCURACY DROP COMPARED TO FP32
+======================================================================
+FP16 (Approximate)     0.02% drop
+BFloat16 (Approximate)   0.18% drop
