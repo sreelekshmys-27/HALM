@@ -1,0 +1,225 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import datasets, transforms
+
+# =========================================================
+# HALM MULTIPLIER 
+# =========================================================
+class HALM_Multiplier(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, a, b):
+
+        zero_mask = (a == 0) | (b == 0)
+
+        sign = torch.sign(a) * torch.sign(b)
+
+        a = torch.clamp(torch.abs(a), min=1e-6)
+        b = torch.clamp(torch.abs(b), min=1e-6)
+
+        # ---------------- EXPONENT EXTRACTION ----------------
+        exp_a = torch.floor(torch.log2(a))
+        exp_b = torch.floor(torch.log2(b))
+
+        mant_a = a / torch.pow(2.0, exp_a)
+        mant_b = b / torch.pow(2.0, exp_b)
+
+        # ---------------- FRACTIONAL PART ----------------
+        k_a = torch.clamp(mant_a - 1.0, 0, 0.9999)
+        k_b = torch.clamp(mant_b - 1.0, 0, 0.9999)
+
+        # ---------------- SEGMENT DETECTOR ----------------
+        seg_a = (k_a * 16).long().clamp(0, 15)
+        seg_b = (k_b * 16).long().clamp(0, 15)
+
+        # ---------------- PLA LOG ----------------
+        slope = torch.tensor([
+            1.0, 0.875, 0.781, 0.703,
+            0.641, 0.594, 0.547, 0.516,
+            0.484, 0.453, 0.406, 0.359,
+            0.297, 0.219, 0.125, 0.0
+        ], device=a.device)
+
+        intercept = torch.tensor([
+            0.0, 0.125, 0.219, 0.297,
+            0.359, 0.406, 0.453, 0.484,
+            0.516, 0.547, 0.594, 0.641,
+            0.703, 0.781, 0.875, 1.0
+        ], device=a.device)
+
+        log_a = slope[seg_a] * k_a + intercept[seg_a]
+        log_b = slope[seg_b] * k_b + intercept[seg_b]
+
+        # ---------------- LOG ADD ----------------
+        log_sum = log_a + log_b
+
+        # ---------------- ANTILOG  ----------------
+        seg_out = (log_sum * 16).long().clamp(0, 15)
+
+        anti_slope = torch.tensor([
+            0.080, 0.075, 0.070, 0.065,
+            0.060, 0.058, 0.055, 0.052,
+            0.050, 0.048, 0.046, 0.044,
+            0.042, 0.040, 0.038, 0.036
+        ], device=a.device)
+
+        anti_intercept = torch.linspace(1.0, 1.95, 16, device=a.device)
+
+        mant_out = anti_slope[seg_out] * log_sum + anti_intercept[seg_out]
+
+        # ---------------- ERROR COMPENSATION ----------------
+        correction = 1 + 0.015 * (k_a * k_b)
+        mant_out = mant_out * correction
+
+        mant_out = torch.clamp(mant_out, 1.0, 2.0)
+
+        # ---------------- RECONSTRUCTION ----------------
+        exp_out = exp_a + exp_b
+        result = mant_out * torch.pow(2.0, exp_out)
+        result = result * sign
+
+        # small bias correction (important)
+        result = result * 0.995
+
+        result = torch.where(zero_mask, torch.zeros_like(result), result)
+
+        ctx.save_for_backward(a, b)
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        a, b = ctx.saved_tensors
+        return grad_output * b, grad_output * a
+
+
+# =========================================================
+# HALM LINEAR 
+# =========================================================
+class HALM_Linear(nn.Module):
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(out_features, in_features) * 0.05)
+        self.bias = nn.Parameter(torch.zeros(out_features))
+        self.alpha = 1.0  # blending factor
+
+    def forward(self, x):
+
+        x_exp = x.unsqueeze(1)          # [B,1,N]
+        w_exp = self.weight.unsqueeze(0) # [1,O,N]
+
+        approx = HALM_Multiplier.apply(x_exp, w_exp)
+        exact = x_exp * w_exp
+
+        
+        mul = self.alpha * exact + (1 - self.alpha) * approx
+
+        out = mul.sum(dim=2)
+
+        return out * 0.99 + self.bias
+
+
+# =========================================================
+# MODEL
+# =========================================================
+class HALM_MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = HALM_Linear(784, 128)
+        self.fc2 = HALM_Linear(128, 10)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = x.view(-1, 784)
+        x = self.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+
+# =========================================================
+# TRAIN
+# =========================================================
+def train(model, device, loader, optimizer):
+    model.train()
+    correct = 0
+
+    for data, target in loader:
+        data, target = data.to(device), target.to(device)
+
+        optimizer.zero_grad()
+        output = model(data)
+        loss = nn.CrossEntropyLoss()(output, target)
+
+        loss.backward()
+        optimizer.step()
+
+        pred = output.argmax(dim=1)
+        correct += pred.eq(target).sum().item()
+
+    return 100. * correct / len(loader.dataset)
+
+
+# =========================================================
+# TEST
+# =========================================================
+def test(model, device, loader):
+    model.eval()
+    correct = 0
+
+    with torch.no_grad():
+        for data, target in loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+
+            pred = output.argmax(dim=1)
+            correct += pred.eq(target).sum().item()
+
+    return 100. * correct / len(loader.dataset)
+
+
+# =========================================================
+# MAIN
+# =========================================================
+def main():
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+
+    train_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('./data', train=True, download=True, transform=transform),
+        batch_size=64, shuffle=True)
+
+    test_loader = torch.utils.data.DataLoader(
+        datasets.MNIST('./data', train=False, transform=transform),
+        batch_size=64, shuffle=False)
+
+    model = HALM_MLP().to(device)
+
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+    print("="*60)
+    print("HALM Architecture Training")
+    print("="*60)
+
+    for epoch in range(1, 11):
+
+        alpha = max(0.0, 1.0 - epoch / 10.0)
+
+        model.fc1.alpha = alpha
+        model.fc2.alpha = alpha
+
+        train_acc = train(model, device, train_loader, optimizer)
+        test_acc = test(model, device, test_loader)
+
+        print(f"Epoch {epoch:2d}/10 | alpha={alpha:.2f} | "
+              f"Train: {train_acc:.2f}% | Test: {test_acc:.2f}%")
+
+    print("\nFinal Test Accuracy:", test_acc)
+
+
+if __name__ == "__main__":
+    main()
