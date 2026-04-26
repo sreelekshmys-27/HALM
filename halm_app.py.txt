@@ -1,0 +1,244 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+from skimage.metrics import peak_signal_noise_ratio as psnr
+from skimage.metrics import structural_similarity as ssim
+
+# ============================================================
+# 1. SAFE IMAGE LOADER (WORKS EVERYWHERE)
+# ============================================================
+def load_image(image_path=None):
+    
+    # 🔹 Case 1: Path provided
+    if image_path and os.path.exists(image_path):
+        img = cv2.imread(image_path)
+        if img is None:
+            raise ValueError("❌ OpenCV failed to read image")
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    # 🔹 Case 2: Google Colab upload
+    try:
+        from google.colab import files
+        print("📂 Upload an image...")
+        uploaded = files.upload()
+        fname = list(uploaded.keys())[0]
+        img = cv2.imread(fname)
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    except:
+        raise FileNotFoundError("❌ Provide a valid image path")
+
+
+# ============================================================
+# 2. HALM MULTIPLIER (HARDWARE-STYLE)
+# ============================================================
+def halm_mul(a, b):
+
+    a = np.abs(a) + 1e-10
+    b = np.abs(b) + 1e-10
+
+    # ================================
+    # EXPONENT
+    # ================================
+    exp_a = np.floor(np.log2(a))
+    exp_b = np.floor(np.log2(b))
+
+    mant_a = a / (2 ** exp_a)
+    mant_b = b / (2 ** exp_b)
+
+    # ================================
+    # FRACTION
+    # ================================
+    k_a = np.clip(mant_a - 1.0, 0, 0.9999)
+    k_b = np.clip(mant_b - 1.0, 0, 0.9999)
+
+    seg_a = np.clip((k_a * 16).astype(int), 0, 15)
+    seg_b = np.clip((k_b * 16).astype(int), 0, 15)
+
+    # ================================
+    # IMPROVED PLA COEFFICIENTS
+    # (fitted for log2(1+x))
+    # ================================
+    slope = np.array([
+        1.44,1.32,1.22,1.14,
+        1.06,0.99,0.93,0.88,
+        0.83,0.79,0.75,0.71,
+        0.68,0.64,0.61,0.58
+    ])
+
+    intercept = np.array([
+        0.0,0.02,0.04,0.06,
+        0.08,0.10,0.12,0.14,
+        0.16,0.18,0.20,0.22,
+        0.24,0.26,0.28,0.30
+    ])
+
+    log_a = slope[seg_a] * k_a + intercept[seg_a]
+    log_b = slope[seg_b] * k_b + intercept[seg_b]
+
+    # ================================
+    # NONLINEAR ERROR LUT (better)
+    # ================================
+    err_lut = (np.linspace(0,1,128)**2) * 0.0006
+
+    log_a += err_lut[(k_a * 127).astype(int)]
+    log_b += err_lut[(k_b * 127).astype(int)]
+
+    log_sum = log_a + log_b
+
+    # ================================
+    # ANTILOG (FIXED)
+    # ================================
+    frac = log_sum - np.floor(log_sum)
+
+    seg_out = np.clip((frac * 16).astype(int), 0, 15)
+
+    anti_slope = np.array([
+        0.70,0.72,0.74,0.76,
+        0.78,0.80,0.82,0.84,
+        0.86,0.88,0.90,0.92,
+        0.94,0.96,0.98,1.00
+    ])
+
+    anti_intercept = np.array([
+        1.00,1.03,1.06,1.09,
+        1.12,1.15,1.18,1.21,
+        1.24,1.27,1.30,1.33,
+        1.36,1.39,1.42,1.45
+    ])
+
+    mant_out = anti_slope[seg_out] * frac + anti_intercept[seg_out]
+
+    # ================================
+    # NORMALIZATION (CRITICAL FIX)
+    # ================================
+    mant_out = np.clip(mant_out, 1.0, 2.0)
+
+    exp_out = exp_a + exp_b + np.floor(log_sum)
+
+    result = mant_out * (2 ** exp_out)
+
+    return result
+
+
+# ============================================================
+# 3.  GAUSSIAN KERNEL
+# ============================================================
+KERNEL = (1/256.0) * np.array([
+    [21, 31, 21],
+    [31, 48, 31],
+    [21, 31, 21]
+], dtype=np.float32)
+
+
+# ============================================================
+# 4. EXACT FILTER
+# ============================================================
+def exact_filter(img):
+    return cv2.filter2D(img, -1, KERNEL)
+
+
+# ============================================================
+# 5. HALM FILTER (MULTIPLIER REPLACEMENT)
+# ============================================================
+def halm_filter(img):
+
+    h, w, c = img.shape
+    padded = np.pad(img, ((1,1),(1,1),(0,0)), mode='edge')
+    out = np.zeros_like(img, dtype=np.float32)
+
+    for i in range(h):
+        for j in range(w):
+            for ch in range(c):
+
+                acc = 0.0
+
+                for ki in range(3):
+                    for kj in range(3):
+                        pixel = padded[i+ki, j+kj, ch]
+                        weight = KERNEL[ki, kj]
+
+                        acc += halm_mul(pixel, weight)
+
+                out[i, j, ch] = acc
+
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+# ============================================================
+# 6. ERROR METRICS
+# ============================================================
+def compute_error_metrics(exact, approx):
+
+    exact = exact.astype(np.float32)
+    approx = approx.astype(np.float32)
+
+    error = approx - exact
+
+    MED = np.mean(error)
+    MRED = np.mean(np.abs(error) / (np.abs(exact) + 1e-8))
+    NMED = np.mean(np.abs(error)) / (np.max(exact) + 1e-8)
+
+    return MED, MRED, NMED
+
+
+# ============================================================
+# 7. MAIN PIPELINE
+# ============================================================
+def run_pipeline(image_path=None):
+
+    img = load_image(image_path)
+
+    print("✅ Image loaded:", img.shape)
+
+    print("Running Exact Gaussian...")
+    exact = exact_filter(img)
+
+    print("Running HALM Gaussian...")
+    approx = halm_filter(img)
+
+    # Metrics
+    psnr_val = psnr(exact, approx, data_range=255)
+    ssim_val = ssim(exact, approx, channel_axis=2, data_range=255)
+
+    MED, MRED, NMED = compute_error_metrics(exact, approx)
+
+    print("\n========= RESULTS =========")
+    print(f"PSNR  : {psnr_val:.2f} dB")
+    print(f"SSIM  : {ssim_val:.4f}")
+    print(f"MED   : {MED:.6f}")
+    print(f"MRED  : {MRED:.6f}")
+    print(f"NMED  : {NMED:.6f}")
+
+    # Visualization
+    plt.figure(figsize=(14,5))
+
+    plt.subplot(1,3,1)
+    plt.imshow(img)
+    plt.title("Original")
+    plt.axis('off')
+
+    plt.subplot(1,3,2)
+    plt.imshow(exact)
+    plt.title("Exact Gaussian")
+    plt.axis('off')
+
+    plt.subplot(1,3,3)
+    plt.imshow(approx)
+    plt.title("HALM Approximation")
+    plt.axis('off')
+
+    plt.show()
+
+
+# ============================================================
+# 8. RUN
+# ============================================================
+if __name__ == "__main__":
+
+    # 👉 OPTION 1: Give full path
+    # run_pipeline(r"C:\Users\SREELAKSHMI\Desktop\flowers.png")
+
+    # 👉 OPTION 2: Just run (will ask upload in Colab)
+    run_pipeline()
