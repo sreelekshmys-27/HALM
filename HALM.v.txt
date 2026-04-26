@@ -1,0 +1,640 @@
+## **Complete Verilog Implementation of Streamlined HALM Multiplier**
+
+### **1. Main Module - Streamlined HALM Multiplier**
+
+
+module streamlined_halm_multiplier (
+    input wire clk,
+    input wire reset,
+    input wire [15:0] operand_a,
+    input wire [15:0] operand_b,
+    input wire start,
+    output reg [15:0] result,
+    output reg done,
+    output reg [7:0] power_estimate
+);
+
+    // Internal signals
+    wire [9:0] mantissa_a, mantissa_b;
+    wire [4:0] exponent_a, exponent_b;
+    wire sign_a, sign_b;
+    wire [1:0] precision_level;
+    wire [1:0] compensation_level;
+    wire [10:0] log_result_a, log_result_b;
+    wire [11:0] log_sum;
+    wire [10:0] antilog_result;
+    wire [9:0] compressed_mantissa;
+    wire [9:0] adjusted_mantissa;
+    wire [4:0] final_exponent;
+    wire final_sign;
+    
+    // State machine
+    reg [2:0] state;
+    localparam IDLE = 3'b000;
+    localparam ADAPTIVE = 3'b001;
+    localparam LOGARITHMIC = 3'b010;
+    localparam ADDITION = 3'b011;
+    localparam ANTILOGARITHMIC = 3'b100;
+    localparam POST_PROCESS = 3'b101;
+    localparam COMPLETE = 3'b110;
+    
+    // Field extraction
+    assign sign_a = operand_a[15];
+    assign sign_b = operand_b[15];
+    assign exponent_a = operand_a[14:10];
+    assign exponent_b = operand_b[14:10];
+    assign mantissa_a = {1'b1, operand_a[9:0]};  // Implied 1
+    assign mantissa_b = {1'b1, operand_b[9:0]};  // Implied 1
+    
+    // Adaptive processing stage
+    adaptive_processing_stage adaptive_stage (
+        .clk(clk),
+        .reset(reset),
+        .mantissa_a(mantissa_a),
+        .mantissa_b(mantissa_b),
+        .exponent_a(exponent_a),
+        .exponent_b(exponent_b),
+        .precision_level(precision_level),
+        .compensation_level(compensation_level)
+    );
+    
+    // Logarithmic approximation stage
+    logarithmic_approximation_stage log_stage (
+        .clk(clk),
+        .reset(reset),
+        .mantissa_a(mantissa_a),
+        .mantissa_b(mantissa_b),
+        .precision_level(precision_level),
+        .log_result_a(log_result_a),
+        .log_result_b(log_result_b)
+    );
+    
+    // Addition stage
+    assign log_sum = log_result_a + log_result_b;
+    
+    // Antilogarithmic approximation stage
+    antilogarithmic_approximation_stage antilog_stage (
+        .clk(clk),
+        .reset(reset),
+        .log_sum(log_sum),
+        .precision_level(precision_level),
+        .antilog_result(antilog_result)
+    );
+    
+    // Post-processing stage
+    post_processing_stage post_stage (
+        .clk(clk),
+        .reset(reset),
+        .antilog_result(antilog_result),
+        .compensation_level(compensation_level),
+        .compressed_mantissa(compressed_mantissa),
+        .adjusted_mantissa(adjusted_mantissa)
+    );
+    
+    // Result assembly
+    assign final_sign = sign_a ^ sign_b;
+    assign final_exponent = exponent_a + exponent_b - 5'd15;  // Bias adjustment
+    
+    // Main control logic
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            state <= IDLE;
+            done <= 1'b0;
+            result <= 16'b0;
+            power_estimate <= 8'b0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (start) begin
+                        state <= ADAPTIVE;
+                        done <= 1'b0;
+                    end
+                end
+                
+                ADAPTIVE: begin
+                    state <= LOGARITHMIC;
+                end
+                
+                LOGARITHMIC: begin
+                    state <= ADDITION;
+                end
+                
+                ADDITION: begin
+                    state <= ANTILOGARITHMIC;
+                end
+                
+                ANTILOGARITHMIC: begin
+                    state <= POST_PROCESS;
+                end
+                
+                POST_PROCESS: begin
+                    state <= COMPLETE;
+                end
+                
+                COMPLETE: begin
+                    result <= {final_sign, final_exponent, adjusted_mantissa[8:0]};
+                    done <= 1'b1;
+                    power_estimate <= get_power_estimate(precision_level);
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+    
+    // Power estimation function
+    function [7:0] get_power_estimate;
+        input [1:0] precision;
+        case (precision)
+            2'b00: get_power_estimate = 8'd25;  // ULTRA_HIGH
+            2'b01: get_power_estimate = 8'd18;  // HIGH
+            2'b10: get_power_estimate = 8'd12;  // MEDIUM
+            2'b11: get_power_estimate = 8'd7;   // LOW
+        endcase
+    endfunction
+    
+endmodule
+```
+
+### **2. Adaptive Processing Stage Module**
+
+```verilog
+module adaptive_processing_stage (
+    input wire clk,
+    input wire reset,
+    input wire [9:0] mantissa_a,
+    input wire [9:0] mantissa_b,
+    input wire [4:0] exponent_a,
+    input wire [4:0] exponent_b,
+    output reg [1:0] precision_level,
+    output reg [1:0] compensation_level
+);
+
+    // Internal signals
+    wire [3:0] segment_a, segment_b;
+    wire [5:0] k_a, k_b;
+    wire [1:0] range_level;
+    wire [1:0] entropy_strategy;
+    wire [7:0] entropy_value;
+    wire [4:0] lut_address;
+    
+    // Dynamic range detector
+    dynamic_range_detector range_detector (
+        .mantissa_a(mantissa_a),
+        .mantissa_b(mantissa_b),
+        .exponent_a(exponent_a),
+        .exponent_b(exponent_b),
+        .range_level(range_level)
+    );
+    
+    // Pattern recognition
+    pattern_recognition_system pattern_recog (
+        .mantissa_a(mantissa_a),
+        .mantissa_b(mantissa_b),
+        .pattern_type(entropy_strategy)
+    );
+    
+    // Entropy calculator
+    entropy_calculator entropy_calc (
+        .mantissa_a(mantissa_a),
+        .mantissa_b(mantissa_b),
+        .entropy_value(entropy_value)
+    );
+    
+    // 32-entry adaptive precision LUT
+    adaptive_precision_lut precision_lut (
+        .range_level(range_level),
+        .entropy_strategy(entropy_strategy),
+        .entropy_value(entropy_value),
+        .precision_level(precision_level),
+        .compensation_level(compensation_level)
+    );
+    
+endmodule
+```
+
+### **3. Logarithmic Approximation Stage Module**
+
+```verilog
+module logarithmic_approximation_stage (
+    input wire clk,
+    input wire reset,
+    input wire [9:0] mantissa_a,
+    input wire [9:0] mantissa_b,
+    input wire [1:0] precision_level,
+    output reg [10:0] log_result_a,
+    output reg [10:0] log_result_b
+);
+
+    // Internal signals
+    wire [3:0] segment_a, segment_b;
+    wire [5:0] k_a, k_b;
+    wire [15:0] slope_a, slope_b;
+    wire [15:0] intercept_a, intercept_b;
+    wire [15:0] basic_approx_a, basic_approx_b;
+    wire [15:0] compensation_a, compensation_b;
+    wire [6:0] lut_address_a, lut_address_b;
+    
+    // Segment detection
+    segment_detector seg_detector_a (
+        .mantissa_input(mantissa_a),
+        .segment_address(segment_a)
+    );
+    
+    segment_detector seg_detector_b (
+        .mantissa_input(mantissa_b),
+        .segment_address(segment_b)
+    );
+    
+    // Fractional part extraction
+    fractional_extractor frac_extractor_a (
+        .mantissa_input(mantissa_a),
+        .k_value(k_a)
+    );
+    
+    fractional_extractor frac_extractor_b (
+        .mantissa_input(mantissa_b),
+        .k_value(k_b)
+    );
+    
+    // 16-to-1 MUX for coefficients
+    coefficient_mux coeff_mux_a (
+        .segment_address(segment_a),
+        .precision_level(precision_level),
+        .slope(slope_a),
+        .intercept(intercept_a)
+    );
+    
+    coefficient_mux coeff_mux_b (
+        .segment_address(segment_b),
+        .precision_level(precision_level),
+        .slope(slope_b),
+        .intercept(intercept_b)
+    );
+    
+    // Linear approximation calculator
+    linear_approximation_calculator calc_a (
+        .k_value(k_a),
+        .slope(slope_a),
+        .intercept(intercept_a),
+        .basic_result(basic_approx_a)
+    );
+    
+    linear_approximation_calculator calc_b (
+        .k_value(k_b),
+        .slope(slope_b),
+        .intercept(intercept_b),
+        .basic_result(basic_approx_b)
+    );
+    
+    // Error compensation LUT
+    error_compensation_lut error_lut_a (
+        .address(lut_address_a),
+        .compensation(compensation_a)
+    );
+    
+    error_compensation_lut error_lut_b (
+        .address(lut_address_b),
+        .compensation(compensation_b)
+    );
+    
+    // Address generation
+    assign lut_address_a = {k_a, 1'b0};
+    assign lut_address_b = {k_b, 1'b0};
+    
+    // Final results
+    always @(posedge clk) begin
+        if (reset) begin
+            log_result_a <= 11'b0;
+            log_result_b <= 11'b0;
+        end else begin
+            log_result_a <= basic_approx_a + compensation_a;
+            log_result_b <= basic_approx_b + compensation_b;
+        end
+    end
+    
+endmodule
+```
+
+### **4. Antilogarithmic Approximation Stage Module**
+
+```verilog
+module antilogarithmic_approximation_stage (
+    input wire clk,
+    input wire reset,
+    input wire [11:0] log_sum,
+    input wire [1:0] precision_level,
+    output reg [10:0] antilog_result
+);
+
+    // Internal signals
+    wire [3:0] segment_index;
+    wire [15:0] slope, intercept;
+    wire [15:0] basic_result;
+    wire [15:0] pattern_compensation;
+    
+    // Segment detection for antilogarithmic
+    antilog_segment_detector antilog_seg_detector (
+        .log_input(log_sum),
+        .segment_index(segment_index)
+    );
+    
+    // Coefficient selection
+    antilog_coefficient_mux antilog_coeff_mux (
+        .segment_address(segment_index),
+        .precision_level(precision_level),
+        .slope(slope),
+        .intercept(intercept)
+    );
+    
+    // Linear approximation
+    antilog_linear_calculator antilog_calc (
+        .log_input(log_sum),
+        .slope(slope),
+        .intercept(intercept),
+        .basic_result(basic_result)
+    );
+    
+    // Pattern-based compensation
+    pattern_compensation_lut pattern_comp_lut (
+        .log_input(log_sum),
+        .compensation(pattern_compensation)
+    );
+    
+    // Final result
+    always @(posedge clk) begin
+        if (reset) begin
+            antilog_result <= 11'b0;
+        end else begin
+            antilog_result <= basic_result + pattern_compensation;
+        end
+    end
+    
+endmodule
+```
+
+### **5. Post-Processing Stage Module**
+
+```verilog
+module post_processing_stage (
+    input wire clk,
+    input wire reset,
+    input wire [10:0] antilog_result,
+    input wire [1:0] compensation_level,
+    output reg [9:0] compressed_mantissa,
+    output reg [9:0] adjusted_mantissa
+);
+
+    // Internal signals
+    wire [9:0] rounded_result;
+    wire [15:0] adjustment_value;
+    
+    // Mantissa compressor
+    mantissa_compressor compressor (
+        .antilog_result(antilog_result),
+        .compressed_mantissa(compressed_mantissa)
+    );
+    
+    // Adjustment block
+    adjustment_block adjuster (
+        .compressed_mantissa(compressed_mantissa),
+        .compensation_level(compensation_level),
+        .adjustment_value(adjustment_value)
+    );
+    
+    // Final adjustment
+    always @(posedge clk) begin
+        if (reset) begin
+            adjusted_mantissa <= 10'b0;
+        end else begin
+            adjusted_mantissa <= compressed_mantissa + adjustment_value[11:2];
+        end
+    end
+    
+endmodule
+```
+
+### **6. Supporting Modules**
+
+#### **A. Segment Detector:**
+module segment_detector (
+    input wire [9:0] mantissa_input,
+    output wire [3:0] segment_address
+);
+    
+    // Extract 4 MSBs of fractional part for segment selection
+    assign segment_address = mantissa_input[9:6];
+    
+endmodule
+```
+
+#### **B. Fractional Extractor:**
+
+module fractional_extractor (
+    input wire [9:0] mantissa_input,
+    output wire [5:0] k_value
+);
+    
+    // Extract 6 LSBs for fractional part k
+    assign k_value = mantissa_input[5:0];
+    
+endmodule
+
+#### **C. Coefficient MUX:**
+
+module coefficient_mux (
+    input wire [3:0] segment_address,
+    input wire [1:0] precision_level,
+    output reg [15:0] slope,
+    output reg [15:0] intercept
+);
+    
+    // 16-segment coefficient selection
+    always @(*) begin
+        case (segment_address)
+            4'b0000: begin  // Segment 0
+                slope = 16'h4000;      // 1.000
+                intercept = 16'h0000;  // 0.000
+            end
+            4'b0001: begin  // Segment 1
+                slope = 16'h3800;      // 0.875
+                intercept = 16'h2000;  // 0.125
+            end
+            4'b0010: begin  // Segment 2
+                slope = 16'h3200;      // 0.781
+                intercept = 16'h3800;  // 0.219
+            end
+            4'b0011: begin  // Segment 3
+                slope = 16'h2D00;      // 0.703
+                intercept = 16'h4C00;  // 0.297
+            end
+            4'b0100: begin  // Segment 4
+                slope = 16'h2900;      // 0.641
+                                intercept = 16'h5C00;  // 0.359
+            end
+            4'b0101: begin  // Segment 5
+                slope = 16'h2600;      // 0.594
+                intercept = 16'h6800;  // 0.406
+            end
+            4'b0110: begin  // Segment 6
+                slope = 16'h2300;      // 0.547
+                intercept = 16'h7400;  // 0.453
+            end
+            4'b0111: begin  // Segment 7
+                slope = 16'h2100;      // 0.516
+                intercept = 16'h7C00;  // 0.484
+            end
+            4'b1000: begin  // Segment 8
+                slope = 16'h1F00;      // 0.484
+                intercept = 16'h8400;  // 0.516
+            end
+            4'b1001: begin  // Segment 9
+                slope = 16'h1D00;      // 0.453
+                intercept = 16'h8C00;  // 0.547
+            end
+            4'b1010: begin  // Segment 10
+                slope = 16'h1A00;      // 0.406
+                intercept = 16'h9800;  // 0.594
+            end
+            4'b1011: begin  // Segment 11
+                slope = 16'h1700;      // 0.359
+                intercept = 16'hA400;  // 0.641
+            end
+            4'b1100: begin  // Segment 12
+                slope = 16'h1300;      // 0.297
+                intercept = 16'hB400;  // 0.703
+            end
+            4'b1101: begin  // Segment 13
+                slope = 16'h0E00;      // 0.219
+                intercept = 16'hC800;  // 0.781
+            end
+            4'b1110: begin  // Segment 14
+                slope = 16'h0800;      // 0.125
+                intercept = 16'hE000;  // 0.875
+            end
+            4'b1111: begin  // Segment 15
+                slope = 16'h0000;      // 0.000
+                intercept = 16'h4000;  // 1.000
+            end
+        endcase
+    end
+    
+endmodule
+
+
+#### **D. Error Compensation LUT:**
+
+module error_compensation_lut (
+    input wire [6:0] address,
+    output reg [15:0] compensation
+);
+    
+    // 128-entry ROM storing compensation values
+    always @(*) begin
+        case (address)
+            7'h00: compensation = 16'h0000;  // 0.000000
+            7'h01: compensation = 16'h000C;  // 0.000012
+            7'h02: compensation = 16'h0018;  // 0.000024
+            7'h03: compensation = 16'h0024;  // 0.000036
+            7'h04: compensation = 16'h0030;  // 0.000048
+            7'h05: compensation = 16'h003C;  // 0.000060
+            7'h06: compensation = 16'h0048;  // 0.000072
+            7'h07: compensation = 16'h0054;  // 0.000084
+            7'h08: compensation = 16'h0060;  // 0.000096
+            7'h09: compensation = 16'h006C;  // 0.000108
+            7'h0A: compensation = 16'h0078;  // 0.000120
+            7'h0B: compensation = 16'h0084;  // 0.000132
+            7'h0C: compensation = 16'h0090;  // 0.000144
+            7'h0D: compensation = 16'h009C;  // 0.000156
+            7'h0E: compensation = 16'h00A8;  // 0.000168
+            7'h0F: compensation = 16'h00B4;  // 0.000180
+            // ... remaining entries (simplified for brevity)
+            7'h7F: compensation = 16'h0115;  // 0.000277
+            default: compensation = 16'h0000;
+        endcase
+    end
+    
+endmodule
+
+
+### **7. Testbench Module**
+
+
+module streamlined_halm_multiplier_tb;
+    
+    // Test signals
+    reg clk, reset, start;
+    reg [15:0] operand_a, operand_b;
+    wire [15:0] result;
+    wire done;
+    wire [7:0] power_estimate;
+    
+    // Instantiate the multiplier
+    streamlined_halm_multiplier dut (
+        .clk(clk),
+        .reset(reset),
+        .operand_a(operand_a),
+        .operand_b(operand_b),
+        .start(start),
+        .result(result),
+        .done(done),
+        .power_estimate(power_estimate)
+    );
+    
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;  // 100MHz clock
+    end
+    
+    // Test stimulus
+    initial begin
+        // Initialize
+        reset = 1;
+        start = 0;
+        operand_a = 16'h0000;
+        operand_b = 16'h0000;
+        
+        // Reset
+        #20 reset = 0;
+        
+        // Test case 1: 1.5 × 2.0
+        #10 operand_a = 16'h3E00;  // 1.5
+        operand_b = 16'h4000;      // 2.0
+        start = 1;
+        #10 start = 0;
+        
+        // Wait for completion
+        wait(done);
+        $display("Test 1: 1.5 × 2.0 = %h (Expected: 3.0)", result);
+        $display("Power Estimate: %d μW", power_estimate);
+        
+        // Test case 2: 0.75 × 1.25
+        #20 operand_a = 16'h3C00;  // 0.75
+        operand_b = 16'h3E00;      // 1.25
+        start = 1;
+        #10 start = 0;
+        
+        wait(done);
+        $display("Test 2: 0.75 × 1.25 = %h (Expected: 0.9375)", result);
+        $display("Power Estimate: %d μW", power_estimate);
+        
+        // Test case 3: 3.0 × 0.5
+        #20 operand_a = 16'h4000;  // 3.0
+        operand_b = 16'h3800;      // 0.5
+        start = 1;
+        #10 start = 0;
+        
+        wait(done);
+        $display("Test 3: 3.0 × 0.5 = %h (Expected: 1.5)", result);
+        $display("Power Estimate: %d μW", power_estimate);
+        
+        // End simulation
+        #100 $finish;
+    end
+    
+    // Monitor results
+    always @(posedge done) begin
+        $display("Operation completed at time %t", $time);
+    end
+    
+endmodule

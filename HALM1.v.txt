@@ -1,0 +1,203 @@
+`timescale 1ns/1ps
+
+module tb_streamlined_halm_multiplier;
+
+    // -------------------------
+    // SIGNAL DECLARATION
+    // -------------------------
+    reg clk;
+    reg reset;
+    reg start;
+    reg [15:0] operand_a;
+    reg [15:0] operand_b;
+
+    wire [15:0] result;
+    wire done;
+    wire [7:0] power_estimate;
+
+    // -------------------------
+    // DUT INSTANTIATION
+    // -------------------------
+    streamlined_halm_multiplier DUT (
+        .clk(clk),
+        .reset(reset),
+        .operand_a(operand_a),
+        .operand_b(operand_b),
+        .start(start),
+        .result(result),
+        .done(done),
+        .power_estimate(power_estimate)
+    );
+
+    // -------------------------
+    // CLOCK GENERATION
+    // -------------------------
+    always #5 clk = ~clk;
+
+    // -------------------------
+    // VCD DUMP (FOR CADENCE)
+    // -------------------------
+    initial begin
+        $dumpfile("halm.vcd");
+        $dumpvars(0, tb_streamlined_halm_multiplier);
+    end
+
+    // -------------------------
+    // FP16 TO REAL FUNCTION
+    // -------------------------
+    function real fp16_to_real;
+        input [15:0] fp;
+        reg sign;
+        reg [4:0] exp;
+        reg [10:0] mant;
+        real val;
+        begin
+            if (fp == 16'b0) begin
+                fp16_to_real = 0.0;
+            end else begin
+                sign = fp[15];
+                exp  = fp[14:10];
+                mant = {1'b1, fp[9:0]};
+
+                val = mant / 1024.0;
+                val = val * (2.0 ** (exp - 15));
+
+                if (sign) val = -val;
+                fp16_to_real = val;
+            end
+        end
+    endfunction
+
+    // -------------------------
+    // ERROR METRICS VARIABLES
+    // -------------------------
+    real total_ed, total_red;
+    real total_abs_ed, total_abs_red;
+    real MED, MRED, MAED, MARED;
+    integer count;
+
+    // -------------------------
+    // POWER PROXY
+    // -------------------------
+    reg [15:0] prev_result;
+    integer toggle_count;
+
+    always @(posedge clk) begin
+        toggle_count = toggle_count + (result ^ prev_result);
+        prev_result = result;
+    end
+
+    // -------------------------
+    // ERROR COMPUTATION TASK
+    // -------------------------
+    task compute_error;
+        input real exact, approx;
+        real ed, red;
+        begin
+            ed  = exact - approx;
+            red = (exact != 0) ? ed / exact : 0;
+
+            total_ed      = total_ed + ed;
+            total_red     = total_red + red;
+            total_abs_ed  = total_abs_ed + (ed < 0 ? -ed : ed);
+            total_abs_red = total_abs_red + (red < 0 ? -red : red);
+
+            count = count + 1;
+        end
+    endtask
+
+    // -------------------------
+    // TEST TASK
+    // -------------------------
+    task apply_test;
+        input [15:0] a, b;
+        real real_a, real_b, exact, approx;
+
+        begin
+            @(posedge clk);
+            operand_a = a;
+            operand_b = b;
+            start = 1;
+
+            @(posedge clk);
+            start = 0;
+
+            // WAIT FOR DONE
+            wait(done == 1);
+
+            real_a = fp16_to_real(a);
+            real_b = fp16_to_real(b);
+            exact  = real_a * real_b;
+            approx = fp16_to_real(result);
+
+            compute_error(exact, approx);
+
+            $display("TIME=%0t | A=%h B=%h | Exact=%f Approx=%f | Error=%f | Power=%d",
+                     $time, a, b, exact, approx, exact-approx, power_estimate);
+
+            @(posedge clk);
+        end
+    endtask
+
+    // -------------------------
+    // MAIN INITIAL BLOCK
+    // -------------------------
+    initial begin
+        // Initialize
+        clk = 0;
+        reset = 1;
+        start = 0;
+        operand_a = 0;
+        operand_b = 0;
+
+        total_ed = 0;
+        total_red = 0;
+        total_abs_ed = 0;
+        total_abs_red = 0;
+        count = 0;
+        toggle_count = 0;
+        prev_result = 0;
+
+        // Reset
+        #20 reset = 0;
+
+        // -------------------------
+        // DIRECTED TESTS
+        // -------------------------
+        apply_test(16'h3C00, 16'h4000); // 1 * 2
+        apply_test(16'h4000, 16'h4000); // 2 * 2
+        apply_test(16'h4200, 16'h3800); // 3 * 0.5
+        apply_test(16'hC000, 16'h4000); // -2 * 2
+        apply_test(16'h0000, 16'h3C00); // zero case
+        apply_test(16'h7BFF, 16'h0400); // extreme values
+
+        // -------------------------
+        // RANDOM TESTS
+        // -------------------------
+        repeat (200) begin
+            apply_test($random, $random);
+        end
+
+        // -------------------------
+        // FINAL METRICS
+        // -------------------------
+        MED   = total_ed / count;
+        MRED  = total_red / count;
+        MAED  = total_abs_ed / count;
+        MARED = total_abs_red / count;
+
+        $display("\n========= FINAL RESULTS =========");
+        $display("TOTAL TESTS = %0d", count);
+        $display("MED   = %e", MED);
+        $display("MRED  = %e", MRED);
+        $display("MAED  = %e", MAED);
+        $display("MARED = %e", MARED);
+        $display("Toggle Count (Power Proxy) = %d", toggle_count);
+
+        $display("=================================\n");
+
+        #50;
+        $finish;
+    end
+
+endmodule
