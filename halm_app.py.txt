@@ -6,9 +6,7 @@ import os
 from skimage.metrics import peak_signal_noise_ratio as psnr
 from skimage.metrics import structural_similarity as ssim
 
-# ============================================================
-# 1. SAFE IMAGE LOADER (WORKS EVERYWHERE)
-# ============================================================
+
 def load_image(image_path=None):
     
     # 🔹 Case 1: Path provided
@@ -30,9 +28,7 @@ def load_image(image_path=None):
         raise FileNotFoundError("❌ Provide a valid image path")
 
 
-# ============================================================
-# 2. HALM MULTIPLIER (HARDWARE-STYLE)
-# ============================================================
+
 def halm_mul(a, b):
 
     a = np.abs(a) + 1e-10
@@ -77,9 +73,7 @@ def halm_mul(a, b):
     log_a = slope[seg_a] * k_a + intercept[seg_a]
     log_b = slope[seg_b] * k_b + intercept[seg_b]
 
-    # ================================
-    # NONLINEAR ERROR LUT (better)
-    # ================================
+    
     err_lut = (np.linspace(0,1,128)**2) * 0.0006
 
     log_a += err_lut[(k_a * 127).astype(int)]
@@ -87,9 +81,6 @@ def halm_mul(a, b):
 
     log_sum = log_a + log_b
 
-    # ================================
-    # ANTILOG (FIXED)
-    # ================================
     frac = log_sum - np.floor(log_sum)
 
     seg_out = np.clip((frac * 16).astype(int), 0, 15)
@@ -110,9 +101,7 @@ def halm_mul(a, b):
 
     mant_out = anti_slope[seg_out] * frac + anti_intercept[seg_out]
 
-    # ================================
-    # NORMALIZATION (CRITICAL FIX)
-    # ================================
+    
     mant_out = np.clip(mant_out, 1.0, 2.0)
 
     exp_out = exp_a + exp_b + np.floor(log_sum)
@@ -122,9 +111,7 @@ def halm_mul(a, b):
     return result
 
 
-# ============================================================
-# 3.  GAUSSIAN KERNEL
-# ============================================================
+
 KERNEL = (1/256.0) * np.array([
     [21, 31, 21],
     [31, 48, 31],
@@ -132,16 +119,12 @@ KERNEL = (1/256.0) * np.array([
 ], dtype=np.float32)
 
 
-# ============================================================
-# 4. EXACT FILTER
-# ============================================================
+
 def exact_filter(img):
     return cv2.filter2D(img, -1, KERNEL)
 
 
-# ============================================================
-# 5. HALM FILTER (MULTIPLIER REPLACEMENT)
-# ============================================================
+
 def halm_filter(img):
 
     h, w, c = img.shape
@@ -166,9 +149,7 @@ def halm_filter(img):
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-# ============================================================
-# 6. ERROR METRICS
-# ============================================================
+
 def compute_error_metrics(exact, approx):
 
     exact = exact.astype(np.float32)
@@ -183,9 +164,7 @@ def compute_error_metrics(exact, approx):
     return MED, MRED, NMED
 
 
-# ============================================================
-# 7. MAIN PIPELINE
-# ============================================================
+
 def run_pipeline(image_path=None):
 
     img = load_image(image_path)
@@ -232,13 +211,7 @@ def run_pipeline(image_path=None):
     plt.show()
 
 
-# ============================================================
-# 8. RUN
-# ============================================================
+
 if __name__ == "__main__":
 
-    # 👉 OPTION 1: Give full path
-    # run_pipeline(r"C:\Users\SREELAKSHMI\Desktop\flowers.png")
-
-    # 👉 OPTION 2: Just run (will ask upload in Colab)
-    run_pipeline()
+   
